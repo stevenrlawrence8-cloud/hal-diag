@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>HAL Diagnostics</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      background: #0b0f14;
+      color: #f3f6f8;
+      padding: 28px;
+    }
+    h1 {
+      font-size: 42px;
+      margin: 0 0 8px 0;
+    }
+    .sub {
+      font-size: 20px;
+      color: #b7c0c8;
+      margin-bottom: 26px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 16px;
+    }
+    .card {
+      background: #151b23;
+      border: 1px solid #2d3742;
+      border-radius: 16px;
+      padding: 18px 20px;
+    }
+    .label {
+      color: #9eabb6;
+      font-size: 16px;
+      margin-bottom: 6px;
+    }
+    .value {
+      font-size: 26px;
+      font-weight: 700;
+      word-break: break-word;
+    }
+    .small {
+      font-size: 19px;
+      font-weight: 600;
+    }
+    .ok { color: #8ee6a1; }
+    .no { color: #ff9a9a; }
+    .warn { color: #ffd27f; }
+    button {
+      margin-top: 22px;
+      padding: 16px 22px;
+      font-size: 20px;
+      border: 0;
+      border-radius: 12px;
+      cursor: pointer;
+    }
+    pre {
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      font-size: 15px;
+      color: #c9d2da;
+    }
+  </style>
+</head>
+<body>
+  <h1>HAL Diagnostics</h1>
+  <div class="sub">Read-only browser / hardware reconnaissance</div>
+
+  <div id="grid" class="grid"></div>
+
+  <button onclick="window.location.reload()">Refresh diagnostics</button>
+
+  <script>
+    const rows = [];
+    const add = (label, value, cls="") => rows.push({label, value: String(value ?? "Unavailable"), cls});
+
+    function yesNo(v) {
+      return v ? ["Available", "ok"] : ["Unavailable", "no"];
+    }
+
+    async function run() {
+      add("User Agent", navigator.userAgent, "small");
+      add("Platform", navigator.platform || "Unknown");
+      add("Language", navigator.language || "Unknown");
+      add("CPU logical threads", navigator.hardwareConcurrency || "Unavailable");
+      add("Approx. device memory", navigator.deviceMemory ? navigator.deviceMemory + " GB" : "Unavailable");
+      add("Touch points", navigator.maxTouchPoints ?? "Unavailable");
+      add("Screen resolution", `${screen.width} × ${screen.height}`);
+      add("Viewport", `${innerWidth} × ${innerHeight}`);
+      add("Pixel ratio", window.devicePixelRatio || 1);
+      add("Color depth", screen.colorDepth ? screen.colorDepth + "-bit" : "Unavailable");
+      add("Timezone", Intl.DateTimeFormat().resolvedOptions().timeZone || "Unknown");
+      add("Online", navigator.onLine ? "Yes" : "No", navigator.onLine ? "ok" : "no");
+
+      // Network Information API
+      const c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+      if (c) {
+        add("Connection type", c.effectiveType || c.type || "Unknown");
+        if (c.downlink) add("Estimated downlink", c.downlink + " Mbps");
+        if (c.rtt) add("Estimated RTT", c.rtt + " ms");
+      } else {
+        add("Network info API", "Unavailable", "no");
+      }
+
+      // Storage estimate
+      try {
+        if (navigator.storage && navigator.storage.estimate) {
+          const est = await navigator.storage.estimate();
+          const mb = x => x ? (x / 1024 / 1024).toFixed(1) + " MB" : "0 MB";
+          add("Browser storage used", mb(est.usage));
+          add("Browser storage quota", mb(est.quota));
+        }
+      } catch {}
+
+      // Client hints
+      try {
+        if (navigator.userAgentData) {
+          add("UA mobile", navigator.userAgentData.mobile ? "Yes" : "No");
+          const hi = await navigator.userAgentData.getHighEntropyValues([
+            "architecture","bitness","model","platform","platformVersion","fullVersionList","wow64"
+          ]);
+          add("Architecture", hi.architecture || "Unknown");
+          add("Bitness", hi.bitness || "Unknown");
+          add("Platform version", hi.platformVersion || "Unknown");
+          if (hi.model) add("Device model", hi.model);
+          if (hi.fullVersionList) {
+            add("Browser versions", hi.fullVersionList.map(x => `${x.brand} ${x.version}`).join(" | "), "small");
+          }
+        } else {
+          add("Client Hints", "Unavailable", "no");
+        }
+      } catch (e) {
+        add("Client Hints", "Blocked / unavailable", "warn");
+      }
+
+      // WebGL GPU renderer
+      try {
+        const canvas = document.createElement("canvas");
+        const gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
+        if (gl) {
+          const dbg = gl.getExtension("WEBGL_debug_renderer_info");
+          if (dbg) {
+            add("GPU vendor", gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) || "Unknown");
+            add("GPU renderer", gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) || "Unknown", "small");
+          } else {
+            add("WebGL renderer details", "Extension unavailable", "warn");
+          }
+          add("WebGL version", gl.getParameter(gl.VERSION) || "Unknown", "small");
+        } else {
+          add("WebGL", "Unavailable", "no");
+        }
+      } catch {
+        add("WebGL", "Blocked / unavailable", "warn");
+      }
+
+      // Capability flags
+      const caps = [
+        ["WebUSB", !!navigator.usb],
+        ["WebHID", !!navigator.hid],
+        ["WebSerial", !!navigator.serial],
+        ["Bluetooth", !!navigator.bluetooth],
+        ["WebGPU", !!navigator.gpu],
+        ["Geolocation", !!navigator.geolocation],
+        ["Gamepad API", !!navigator.getGamepads],
+        ["MediaDevices", !!navigator.mediaDevices],
+        ["Clipboard API", !!navigator.clipboard],
+        ["Service Worker", "serviceWorker" in navigator],
+        ["Web Share", !!navigator.share],
+      ];
+      caps.forEach(([name, val]) => {
+        const [text, cls] = yesNo(val);
+        add(name, text, cls);
+      });
+
+      // Local/session storage
+      try {
+        localStorage.setItem("hal_diag_test", "1");
+        localStorage.removeItem("hal_diag_test");
+        add("localStorage", "Writable", "ok");
+      } catch {
+        add("localStorage", "Blocked", "no");
+      }
+      try {
+        sessionStorage.setItem("hal_diag_test", "1");
+        sessionStorage.removeItem("hal_diag_test");
+        add("sessionStorage", "Writable", "ok");
+      } catch {
+        add("sessionStorage", "Blocked", "no");
+      }
+
+      // Cookies
+      add("Cookies enabled", navigator.cookieEnabled ? "Yes" : "No", navigator.cookieEnabled ? "ok" : "no");
+
+      render();
+    }
+
+    function render() {
+      const grid = document.getElementById("grid");
+      grid.innerHTML = "";
+      rows.forEach(r => {
+        const el = document.createElement("div");
+        el.className = "card";
+        el.innerHTML = `<div class="label">${r.label}</div><div class="value ${r.cls}">${escapeHtml(r.value)}</div>`;
+        grid.appendChild(el);
+      });
+    }
+
+    function escapeHtml(s) {
+      return s.replace(/[&<>"']/g, m => ({
+        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'
+      })[m]);
+    }
+
+    run();
+  </script>
+</body>
+</html>
